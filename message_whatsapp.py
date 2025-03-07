@@ -4,10 +4,13 @@ from utils import (
 )
 import pandas as pd
 import numpy as np
+from tqdm import tqdm
+import os
 
 #%%
+# Read Data
 ranking_associados = pd.read_csv(
-    "data/ranking_sempre_leitura_20250114190058.csv",
+    "data/ranking_sempre_leitura_20250127205915.csv",
     sep=";", 
     decimal=",",
     thousands=".",
@@ -21,6 +24,7 @@ historico_pontuacao = pd.read_excel(
 )
 
 #%%
+# FIlter clients from a specific store
 clientes_loja = (
     historico_pontuacao
         .query("Loja == 'MG/BH - Boulevard BH'")
@@ -39,6 +43,7 @@ ranking_clientes = (
 )
 
 #%%
+# Prepare the message that is going to be sent
 sempreleitura = (
     ranking_clientes
         .query("Saldo > 1000")
@@ -51,6 +56,7 @@ sempreleitura = (
             telefone_contato = lambda x: x["telefone_contato"].astype(str)
         ).
         query("cpf.notnull()")
+        .reset_index(drop=True)
 )
 
 sempreleitura['mensagem'] = sempreleitura.apply(
@@ -61,12 +67,56 @@ sempreleitura['mensagem'] = sempreleitura.apply(
 ).str.strip().to_list()
 
 #%%
+# Filter clients that have already received the message
+messages_sent = os.listdir("data/messages_sent/")
+
+if len(messages_sent) > 0:
+    messages_sent = pd.concat(
+        [pd.read_parquet(f"data/messages_sent/{file}") for file in messages_sent]
+    )
+
+    sempreleitura = (
+        sempreleitura
+            .query("cpf not in @messages_sent['Cliente']")
+            .reset_index(drop=True)
+    )
+
+#%%
+# Send messages and save the results
 zapi_client = ZAPIClient()
 
-zapi_client.send_image(
-    "5531984754371",
-    "Welcome to *Z-API*",
-    "https://cardano-open-files.s3.us-east-1.amazonaws.com/message_image.jpeg"
+message_results = []
+for index, row in tqdm(sempreleitura.iterrows(), total=sempreleitura.shape[0]):
+    wpp_response = zapi_client.send_image(
+        row['telefone_contato'],
+        row['mensagem'],
+        "https://cardano-open-files.s3.us-east-1.amazonaws.com/promocao_va_2025.jpeg"
+    )
+
+    message_results.append(
+        wpp_response.json() | {
+            "Cliente": row['cpf'], 
+            "data_envio": pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+    )
+    
+messages_results = (
+    pd.DataFrame(message_results)
+        .merge(sempreleitura, on="Cliente", how="left")
 )
 
 #%%
+messages_results.to_parquet(
+    f"data/messages_sent/{pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}.parquet", 
+    index=False
+)
+
+#%%
+message_info = ZAPIClient().read_message("3DB74FF113DC20BA87CF46BAC10442D5", "3136817065")
+# %%
+chats = ZAPIClient().get_chat_metadata("31988954634")
+# %%
+chats.json()
+# %%
+message_info.json()
+# %%

@@ -29,7 +29,7 @@ class ZAPIClient:
         self.instance_token = instance_token if instance_token else os.getenv("ZAPI_INSTANCE_TOKEN")
         self.client_token = client_token if client_token else os.getenv("ZAPI_CLIENT_TOKEN")
 
-    def send_image(self, phone, caption, image_url):
+    def send_image(self, phone, caption, image_url, delay_message=10):
         url = f"https://api.z-api.io/instances/{self.instance_id}/token/{self.instance_token}/send-image"
         headers = {
             "client-token": self.client_token,
@@ -38,10 +38,38 @@ class ZAPIClient:
         data = {
             "phone": phone,
             "caption": caption,
-            "image": image_url
+            "image": image_url,
+            "delayMessage": delay_message
         }
 
         return requests.post(url, headers=headers, json=data)
+
+    def read_message(self, message_id, phone):
+        url = f"https://api.z-api.io/instances/{self.instance_id}/token/{self.instance_token}/read-message"
+        headers = {
+            "client-token": self.client_token,
+            "Content-Type": "application/json"
+        }
+        data = {
+            "phone": phone,
+            "message_id": message_id
+        }
+
+        return requests.post(url, headers=headers, json=data)
+
+    def retrieve_chats(self):
+        url = f"https://api.z-api.io/instances/{self.instance_id}/token/{self.instance_token}/chats"
+        headers = {
+            "client-token": self.client_token
+        }
+        return requests.get(url, headers=headers)
+
+    def get_chat_metadata(self, phone):
+        url = f"https://api.z-api.io/instances/{self.instance_id}/token/{self.instance_token}/chats/{phone}"
+        headers = {
+            "client-token": self.client_token
+        }
+        return requests.get(url, headers=headers)
 
 def hide_cpf(cpf: str) -> str:
     cpf = str(cpf)
@@ -91,8 +119,8 @@ def template_mensagem(nome_cliente, nome_loja, numero_pontos, cpf):
     f"Olá, {nome_cliente}! Tudo bem?\n\n"
     f"Aqui é a Júlia, da *{nome_loja}*, e tenho uma notícia incrível:"
     f" você acumulou {numero_pontos_formatado} pontos no programa Sempre Leitura, que equivalem a *R${int(np.floor(numero_pontos / 100))}* de desconto na sua próxima compra em nossa loja! 🎉📚\n\n"
-    "Com o Natal chegando, que tal aproveitar esse super desconto para garantir presentes inesquecíveis? Nosso acervo está repleto de livros, itens exclusivos e muitas opções especiais para todos os gostos. 🎄✨\n\n"
-    f"Passe na *{nome_loja}* e conte conosco para escolher os melhores presentes!\n\n"
-    "Estamos ansiosos para te receber! 😊\n\n"
-    F"*Pontuação vinculada ao CPF {hide_cpf(cpf)}, intransferível e sujeita à validade dos pontos." 
+    "Com a Volta às Aulas chegando, é uma ótima oportunidade para garantir o material escolar de alguém especial! E, claro, você também pode aproveitar seus pontos para levar aquele livro que está de olho há um tempo!\n\n"
+    f"Passe na *{nome_loja}*, onde temos tudo o que você precisa — desde materiais escolares até os melhores livros!\n\n"
+    "Estamos super ansiosos para te receber e te ajudar no que precisar! 😊\n\n"
+    f"*Os pontos estão atrelados ao CPF {hide_cpf(cpf)}, não podem ser transferidos e têm validade, hein! 😉 Quer saber mais? Dá uma olhada no regulamento lá no nosso site!" 
     )   
