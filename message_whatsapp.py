@@ -1,16 +1,18 @@
 #%%
 from utils import (
-    ZAPIClient, select_phone_number, validar_cpf, template_mensagem
+    ZAPIClient, select_phone_number, validar_cpf, TemplateMensagem
 )
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
 import os
 
+nome_projeto = "aviso_pontos_a_expirar"
+
 #%%
 # Read Data
 ranking_associados = pd.read_csv(
-    "data/ranking_sempre_leitura_20250127205915.csv",
+    "data/ranking_sempre_leitura_20250307180134.csv",
     sep=";", 
     decimal=",",
     thousands=".",
@@ -18,21 +20,49 @@ ranking_associados = pd.read_csv(
 )
 
 historico_pontuacao = pd.read_excel(
-    "data/historico_pontuacao.ods",
-    engine="odf",
+    "data/pontuacao_sempre_leitura_20250307172925.xls",
+    decimal=",",
+    thousands=".",
     dtype={"Cliente": str}
 )
 
 #%%
-# FIlter clients from a specific store
-clientes_loja = (
-    historico_pontuacao
-        .query("Loja == 'MG/BH - Boulevard BH'")
-)["Cliente"].unique()
+# Prepare the data
+historico_pontuacao = historico_pontuacao\
+    .rename(columns={
+        "Data/Hora": "date",
+        "Pontos": "pontos_a_expirar"
+    })\
+    .assign(
+        date = lambda x: pd.to_datetime(x["date"], format='%d/%m/%Y %H:%M:%S'),
+        data_a_expirar = lambda x: x["date"] + pd.DateOffset(months=12) - pd.DateOffset(days=1),
+        pontos_a_expirar = lambda x: x["pontos_a_expirar"].astype(float)
+    )
+    
+#%%
+# Filter clients that have points to expire
+data_inicial = pd.Timestamp.now() + pd.DateOffset(days=10)
+data_final = pd.Timestamp.now() + pd.DateOffset(days=30)
 
+clientes_selecionados = historico_pontuacao\
+    .query("data_a_expirar >= @data_inicial and data_a_expirar <= @data_final")\
+    .groupby("Cliente")\
+    .agg(
+        data_a_expirar=("data_a_expirar", "min"),
+        pontos_a_expirar=("pontos_a_expirar", "sum")
+    )\
+    .reset_index()
+
+clientes_selecionados = clientes_selecionados[[
+    "Cliente", "data_a_expirar", "pontos_a_expirar"
+]]
+
+#%%
 ranking_clientes = (
     ranking_associados
-        .query("Cliente in @clientes_loja")
+        .merge(
+            clientes_selecionados, on="Cliente", how="inner"
+        )
         .sort_values("Saldo", ascending=False)
         .assign(
             telefone_contato = lambda x: x.apply(
@@ -60,9 +90,8 @@ sempreleitura = (
 )
 
 sempreleitura['mensagem'] = sempreleitura.apply(
-    lambda row: template_mensagem(
-        row['primeiro_nome'], 'Livraria Leitura do Boulevard Shopping', 
-        row['Saldo'], row["cpf"]
+    lambda row: TemplateMensagem(row['primeiro_nome'], row["cpf"]).pontos_a_expirar(
+        row["data_a_expirar"], row["pontos_a_expirar"], row['Saldo']
     ), axis=1
 ).str.strip().to_list()
 
@@ -73,7 +102,8 @@ messages_sent = os.listdir("data/messages_sent/")
 if len(messages_sent) > 0:
     messages_sent = pd.concat(
         [pd.read_parquet(f"data/messages_sent/{file}") for file in messages_sent]
-    )
+    )\
+        .query("nome_projeto == @nome_projeto")
 
     sempreleitura = (
         sempreleitura
@@ -87,16 +117,16 @@ zapi_client = ZAPIClient()
 
 message_results = []
 for index, row in tqdm(sempreleitura.iterrows(), total=sempreleitura.shape[0]):
-    wpp_response = zapi_client.send_image(
+    wpp_response = zapi_client.send_text(
         row['telefone_contato'],
-        row['mensagem'],
-        "https://cardano-open-files.s3.us-east-1.amazonaws.com/promocao_va_2025.jpeg"
+        row['mensagem']
     )
 
     message_results.append(
         wpp_response.json() | {
             "Cliente": row['cpf'], 
-            "data_envio": pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+            "data_envio": pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "nome_projeto": nome_projeto
         }
     )
     
@@ -111,12 +141,4 @@ messages_results.to_parquet(
     index=False
 )
 
-#%%
-message_info = ZAPIClient().read_message("3DB74FF113DC20BA87CF46BAC10442D5", "3136817065")
-# %%
-chats = ZAPIClient().get_chat_metadata("31988954634")
-# %%
-chats.json()
-# %%
-message_info.json()
 # %%
