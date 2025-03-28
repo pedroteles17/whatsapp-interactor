@@ -1,13 +1,76 @@
 #%%
 from utils import (
-    ZAPIClient, select_phone_number, validar_cpf, TemplateMensagem
+    ZAPIClient, SQLServer, SempreLeitura,
+    select_phone_number, validar_cpf, TemplateMensagem
 )
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
 import os
+import logging
 
 nome_projeto = "aviso_pontos_a_expirar"
+
+#%%
+df = SempreLeitura().getMovimentosContaCorrente(
+    usuario="59626712791"
+)
+
+#%%
+SempreLeitura().calculate_balance(df)
+
+#%%
+sqlserver_db = SQLServer()
+
+query_pontuacao = """
+SELECT mov.usuario, mov.data_hora, mov.valor, mov.tipo, mov.data_cupom, usr.nome_cliente, usr.ddd, usr.telefone, usr.ddd2, usr.telefone2
+FROM sl_movimentacao_conta_corrente mov
+LEFT JOIN sl_usuarios usr
+ON mov.usuario = usr.usuario
+WHERE mov.tipo = 'C'
+    AND CONVERT(DATETIME, mov.data_hora, 120) >= DATEADD(MONTH, -12, GETDATE())
+    AND CONVERT(DATETIME, mov.data_hora, 120) < DATEADD(MONTH, -11, GETDATE())
+"""
+
+#%%
+df_pontuacao = sqlserver_db.pandas_read_sql(query_pontuacao)
+
+#%%
+pontos_a_expirar = df_pontuacao.copy()\
+    .groupby("usuario")\
+    .agg(
+        pontos_a_expirar=("valor", "sum")
+    )\
+    .reset_index()\
+    .merge(
+        df_pontuacao.drop_duplicates(subset="usuario"),
+        on="usuario",
+        how="left"
+    )\
+    .query("pontos_a_expirar > 1000")\
+    .sort_values("pontos_a_expirar", ascending=False)\
+    .reset_index(drop=True)
+
+#%%
+usuarios = pontos_a_expirar["usuario"].to_list()
+
+usuarios = usuarios[20:100]
+
+#%%
+saldos = []
+for usuario in tqdm(usuarios, total=len(usuarios)):
+    try:
+        sempreleitura = SempreLeitura()
+
+        df = sempreleitura.getMovimentosContaCorrente(
+            usuario=usuario
+        )
+
+        saldos.append(
+            sempreleitura.calculate_balance(df)
+        )
+    except Exception as e:
+        logging.error(f"Error processing user {usuario}: {e}")
 
 #%%
 # Read Data
