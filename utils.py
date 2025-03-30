@@ -4,12 +4,14 @@ import logging
 import dotenv
 import os
 import requests
-import locale
 import re
 from sqlalchemy import create_engine
 from datetime import datetime, timedelta
+from babel import Locale
+from babel.dates import format_date
 
-#locale.setlocale(locale.LC_TIME, "pt_BR.utf8")
+locale = Locale('pt', 'BR')
+
 dotenv.load_dotenv()
 
 def select_phone_number(phone, phone2):
@@ -93,6 +95,7 @@ class SempreLeitura:
             'Créditos a Expirar': 0
         }
 
+        datas_a_expirar = []
         for _, movimento in df.iterrows():
             valor = movimento['valor']
             valor_resgatado = movimento.get('valor_resgatado', 0)
@@ -109,6 +112,7 @@ class SempreLeitura:
                             a_totalizadores['Créditos Expirados'] += valor_disponivel
                         elif data_limite_expiracao <= data_cupom < data_limite_a_expirar:
                             a_totalizadores['Créditos a Expirar'] += valor_disponivel
+                            datas_a_expirar.append(data_cupom + timedelta(days=self.VALIDADE_PONTOS_DIAS))
 
             elif movimento['tipo'] in [self.TIPO_MOVIMENTO_DEBITO, self.TIPO_MOVIMENTO_RESGATE]:
                 a_totalizadores['Débitos'] += valor
@@ -116,7 +120,10 @@ class SempreLeitura:
 
         a_totalizadores['Saldo'] -= a_totalizadores['Créditos Expirados']
         
-        return {"Usuario": df.iloc[0]['usuario']} | a_totalizadores
+        return {
+            "usuario": df.iloc[0]['usuario'],
+            "datas_a_expirar": datas_a_expirar,
+        } | a_totalizadores
 
 class SQLServer:
     def __init__(self, server: str = None, database: str = None, username: str = None, password: str = None):
@@ -250,23 +257,23 @@ def validar_cpf(cpf: str) -> bool:
 
     return cpf
 
-def whatsapp_link(cellphone):
-    if len(cellphone) not in [10, 11]:
-        logging.error(f"O número {cellphone} deve ter 11 ou 10 dígitos, mas tem {len(cellphone)}.")
-        return None
+def clean_column_names(column_names):
+    cleaned_names = []
+    for name in column_names:
 
-    if not cellphone.isnumeric():
-        logging.error(f"O número {cellphone} deve conter apenas dígitos.")
-        return None
-
-    return f"https://wa.me/55{cellphone}"
+        # Remove leading/trailing underscores
+        cleaned_name = re.sub(r'^_+|_+$', '', cleaned_name)
+        # Convert to lowercase
+        cleaned_name = cleaned_name.lower()
+        cleaned_names.append(cleaned_name)
+    return cleaned_names
 
 class TemplateMensagem:
     def __init__(self, nome_cliente, cpf):
         self.nome_cliente = nome_cliente
         self.cpf = cpf
 
-    def loja_especifica(nome_loja, numero_pontos):
+    def loja_especifica(self, nome_loja, numero_pontos):
         if numero_pontos < 1000:
             raise ValueError("O número de pontos deve ser maior ou igual a 1000.")
 
@@ -280,18 +287,33 @@ class TemplateMensagem:
         f"*Os pontos estão atrelados ao CPF {self._hide_cpf()}, não podem ser transferidos e têm validade, hein! 😉 Quer saber mais? Dá uma olhada no regulamento lá no nosso site!" 
         )   
 
-    def pontos_a_expirar(self, data_a_expirar, pontos_a_expirar, numero_pontos):
+    def pontos_a_expirar(self, data_a_expirar_inicio, data_a_expirar_fim, pontos_a_expirar, numero_pontos):
         if numero_pontos < 1000:
             raise ValueError("O número de pontos deve ser maior ou igual a 1000.")
+        
+        # Se as datas forem iguais, não precisa do intervalo
+        if pd.notna(data_a_expirar_fim) and data_a_expirar_inicio == data_a_expirar_fim:
+            data_a_expirar_fim = pd.NA
+        
+        if pd.isna(data_a_expirar_fim):
+            mensagem_data = f"no dia {self.format_date_to_text(data_a_expirar_inicio)}"
+        else:
+            mensagem_data = f"entre {self.format_date_to_text(data_a_expirar_inicio)} e {self.format_date_to_text(data_a_expirar_fim)}"
 
         return (
         f"Olá, {self.nome_cliente}! Tudo bem?\n\n"
-        f"Aqui é a Júlia, do programa de pontos *Sempre Leitura*. Passando para te avisar que {self._formatar_numero_pontos(pontos_a_expirar)} dos seus pontos vão expirar a partir de {data_a_expirar.strftime('%d de %B')}! 📅\n\n"
+        f"Aqui é a Júlia, do programa de pontos *Sempre Leitura*. Passando para te avisar que {self._formatar_numero_pontos(pontos_a_expirar)} dos seus pontos vão expirar {mensagem_data}! 📅\n\n"
         f"Que tal aproveitar essa oportunidade para garantir aquele livro dos sonhos ou qualquer outro produto que esteja na sua lista? No total, você tem {self._formatar_numero_pontos(numero_pontos)} pontos, que valem *R${self._transformar_pontos_em_dinheiro(numero_pontos)}* em crédito na *Livraria Leitura*! 💰📚\n\n"
         "Mas atenção: os pontos que expiram não voltam! Então não deixe para depois—vem garantir seu resgate enquanto dá tempo!\n\n"
         "Te esperamos na loja! Qualquer dúvida, é só me chamar. 😉\n\n"
-        f"*Os pontos estão atrelados ao CPF {self._hide_cpf()} e não podem ser transferidos! Quer saber mais? Dá uma olhada no regulamento lá no nosso site!" 
+        f"*Os pontos estão atrelados ao CPF {self._hide_cpf()} e não podem ser transferidos! Quer saber mais? Dá uma olhada no regulamento lá no nosso site!\n\n" 
+        "PS: Não quer mais receber esses lembretes? Sem problema! É só responder SAIR que eu paro de te enviar mensagens! 😉\n\n"
         )
+    
+    def format_date_to_text(self, date):
+        formatted_date = format_date(date, locale=locale, format='long')
+        formatted_date_no_year = ' '.join(formatted_date.split()[:-2])
+        return formatted_date_no_year
 
     def _transformar_pontos_em_dinheiro(self, numero_pontos):
         return int(np.floor(numero_pontos / 100))

@@ -11,35 +11,29 @@ import logging
 
 nome_projeto = "aviso_pontos_a_expirar"
 
-#%%
-df = SempreLeitura().getMovimentosContaCorrente(
-    usuario="59626712791"
-)
-
-#%%
-SempreLeitura().calculate_balance(df)
+data_inicio_pontuacao = pd.Timestamp.now() - pd.DateOffset(months=12) + pd.DateOffset(days=10)
+data_fim_pontuacao = data_inicio_pontuacao + pd.DateOffset(days=20)
 
 #%%
 sqlserver_db = SQLServer()
 
-query_pontuacao = """
+query_pontuacao = f"""
 SELECT mov.usuario, mov.data_hora, mov.valor, mov.tipo, mov.data_cupom, usr.nome_cliente, usr.ddd, usr.telefone, usr.ddd2, usr.telefone2
 FROM sl_movimentacao_conta_corrente mov
 LEFT JOIN sl_usuarios usr
 ON mov.usuario = usr.usuario
 WHERE mov.tipo = 'C'
-    AND CONVERT(DATETIME, mov.data_hora, 120) >= DATEADD(MONTH, -12, GETDATE())
-    AND CONVERT(DATETIME, mov.data_hora, 120) < DATEADD(MONTH, -11, GETDATE())
+    AND CONVERT(DATETIME, mov.data_hora, 120) >= CONVERT(DATETIME, '{data_inicio_pontuacao.strftime("%Y-%m-%d")}', 120)
+    AND CONVERT(DATETIME, mov.data_hora, 120) < CONVERT(DATETIME, '{data_fim_pontuacao.strftime("%Y-%m-%d")}', 120)
 """
 
-#%%
 df_pontuacao = sqlserver_db.pandas_read_sql(query_pontuacao)
 
 #%%
-pontos_a_expirar = df_pontuacao.copy()\
+pontos_acumulados= df_pontuacao.copy()\
     .groupby("usuario")\
     .agg(
-        pontos_a_expirar=("valor", "sum")
+        pontos_acumulados_periodo=("valor", "sum")
     )\
     .reset_index()\
     .merge(
@@ -47,14 +41,14 @@ pontos_a_expirar = df_pontuacao.copy()\
         on="usuario",
         how="left"
     )\
-    .query("pontos_a_expirar > 1000")\
-    .sort_values("pontos_a_expirar", ascending=False)\
+    .query("pontos_acumulados_periodo > 500")\
+    .sort_values("pontos_acumulados_periodo", ascending=False)\
     .reset_index(drop=True)
 
 #%%
-usuarios = pontos_a_expirar["usuario"].to_list()
+usuarios = pontos_acumulados["usuario"].to_list()
 
-usuarios = usuarios[20:100]
+usuarios = usuarios[100:130]
 
 #%%
 saldos = []
@@ -72,80 +66,52 @@ for usuario in tqdm(usuarios, total=len(usuarios)):
     except Exception as e:
         logging.error(f"Error processing user {usuario}: {e}")
 
-#%%
-# Read Data
-ranking_associados = pd.read_csv(
-    "data/ranking_sempre_leitura_20250307180134.csv",
-    sep=";", 
-    decimal=",",
-    thousands=".",
-    dtype={"Telefone": str, "Telefone 2": str, "Cliente": str}
-)
-
-historico_pontuacao = pd.read_excel(
-    "data/pontuacao_sempre_leitura_20250307172925.xls",
-    decimal=",",
-    thousands=".",
-    dtype={"Cliente": str}
-)
+saldos = pd.DataFrame(saldos)
 
 #%%
-# Prepare the data
-historico_pontuacao = historico_pontuacao\
-    .rename(columns={
-        "Data/Hora": "date",
-        "Pontos": "pontos_a_expirar"
-    })\
-    .assign(
-        date = lambda x: pd.to_datetime(x["date"], format='%d/%m/%Y %H:%M:%S'),
-        data_a_expirar = lambda x: x["date"] + pd.DateOffset(months=12) - pd.DateOffset(days=1),
-        pontos_a_expirar = lambda x: x["pontos_a_expirar"].astype(float)
-    )
-    
-#%%
-# Filter clients that have points to expire
-data_inicial = pd.Timestamp.now() + pd.DateOffset(days=10)
-data_final = pd.Timestamp.now() + pd.DateOffset(days=30)
-
-clientes_selecionados = historico_pontuacao\
-    .query("data_a_expirar >= @data_inicial and data_a_expirar <= @data_final")\
-    .groupby("Cliente")\
-    .agg(
-        data_a_expirar=("data_a_expirar", "min"),
-        pontos_a_expirar=("pontos_a_expirar", "sum")
-    )\
-    .reset_index()
-
-clientes_selecionados = clientes_selecionados[[
-    "Cliente", "data_a_expirar", "pontos_a_expirar"
-]]
-
-#%%
-ranking_clientes = (
-    ranking_associados
+pontos_clientes = (
+    saldos
         .merge(
-            clientes_selecionados, on="Cliente", how="inner"
+            pontos_acumulados,
+            on="usuario",
+            how="left"
         )
+        .rename(columns={
+            "Créditos a Expirar": "creditos_a_expirar",
+        })
+        .query("creditos_a_expirar > 500")
+        .query("Saldo > 1000")
         .sort_values("Saldo", ascending=False)
         .assign(
+            filtro_pontuacao_data_inicio = data_inicio_pontuacao,
+            filtro_pontuacao_data_fim = data_fim_pontuacao,
+            telefone_principal = lambda x: x["ddd"].astype(str) + x["telefone"].astype(str),
+            telefone_secundario = lambda x: x["ddd2"].astype(str) + x["telefone2"].astype(str)
+        )
+        .assign(
             telefone_contato = lambda x: x.apply(
-                lambda row: select_phone_number(row["Telefone"], row["Telefone 2"]),
+                lambda row: select_phone_number(row["telefone_principal"], row["telefone_secundario"]),
                 axis=1
+            ),
+            data_min_a_expirar = lambda x: x["datas_a_expirar"].apply(
+                lambda x: min(x) if isinstance(x, list) and len(x) > 0 else pd.NA
+            ),
+            data_max_a_expirar = lambda df: df["datas_a_expirar"].apply(
+                lambda x: max(x) if isinstance(x, list) and len(x) > 1 else pd.NA
             )
         )
+        .reset_index(drop=True)
 )
 
 #%%
 # Prepare the message that is going to be sent
 sempreleitura = (
-    ranking_clientes
-        .query("Saldo > 1000")
-        .sort_values("Saldo", ascending=False) 
+    pontos_clientes
         .query("telefone_contato.notnull()")
         .assign(
-            cpf = lambda x: x["Cliente"].apply(validar_cpf),
+            cpf = lambda x: x["usuario"].apply(validar_cpf),
             dinheiro = lambda x: np.floor(x["Saldo"] / 100),
-            primeiro_nome = lambda x: x["Nome Cliente"].str.split(" ").str[0].str.capitalize(),
+            primeiro_nome = lambda x: x["nome_cliente"].str.split(" ").str[0].str.capitalize(),
             telefone_contato = lambda x: x["telefone_contato"].astype(str)
         ).
         query("cpf.notnull()")
@@ -154,7 +120,8 @@ sempreleitura = (
 
 sempreleitura['mensagem'] = sempreleitura.apply(
     lambda row: TemplateMensagem(row['primeiro_nome'], row["cpf"]).pontos_a_expirar(
-        row["data_a_expirar"], row["pontos_a_expirar"], row['Saldo']
+        row["data_min_a_expirar"], row["data_max_a_expirar"],
+        row["creditos_a_expirar"], row['Saldo']
     ), axis=1
 ).str.strip().to_list()
 
