@@ -48,8 +48,6 @@ pontos_acumulados= df_pontuacao.copy()\
 #%%
 usuarios = pontos_acumulados["usuario"].to_list()
 
-usuarios = usuarios[100:130]
-
 #%%
 saldos = []
 for usuario in tqdm(usuarios, total=len(usuarios)):
@@ -79,8 +77,8 @@ pontos_clientes = (
         .rename(columns={
             "Créditos a Expirar": "creditos_a_expirar",
         })
-        .query("creditos_a_expirar > 500")
-        .query("Saldo > 1000")
+        .query("creditos_a_expirar > 1000")
+        .query("Saldo > 2000")
         .sort_values("Saldo", ascending=False)
         .assign(
             filtro_pontuacao_data_inicio = data_inicio_pontuacao,
@@ -127,48 +125,26 @@ sempreleitura['mensagem'] = sempreleitura.apply(
 
 #%%
 # Filter clients that have already received the message
-messages_sent = os.listdir("data/messages_sent/")
+messages_sent_dir = os.listdir("data/messages_sent/")
 
-if len(messages_sent) > 0:
+if len(messages_sent_dir) > 0:
     messages_sent = pd.concat(
-        [pd.read_parquet(f"data/messages_sent/{file}") for file in messages_sent]
+        [pd.read_parquet(f"data/messages_sent/{file}") for file in messages_sent_dir]
     )\
         .query("nome_projeto == @nome_projeto")
 
     sempreleitura = (
         sempreleitura
-            .query("cpf not in @messages_sent['Cliente']")
+            .query("cpf not in @messages_sent['usuario']")
             .reset_index(drop=True)
     )
 
 #%%
-# Send messages and save the results
-zapi_client = ZAPIClient()
+# Export the data to be sent
+today_ts = pd.Timestamp.now().strftime('%Y-%m-%d %H-%M-%S')
 
-message_results = []
-for index, row in tqdm(sempreleitura.iterrows(), total=sempreleitura.shape[0]):
-    wpp_response = zapi_client.send_text(
-        row['telefone_contato'],
-        row['mensagem']
-    )
-
-    message_results.append(
-        wpp_response.json() | {
-            "Cliente": row['cpf'], 
-            "data_envio": pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
-            "nome_projeto": nome_projeto
-        }
-    )
-    
-messages_results = (
-    pd.DataFrame(message_results)
-        .merge(sempreleitura, on="Cliente", how="left")
-)
-
-#%%
-messages_results.to_parquet(
-    f"data/messages_sent/{pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}.parquet", 
-    index=False
+sempreleitura.to_excel(
+    f"sempre_leitura_com_mensagem_{today_ts}.xlsx", index=False
 )
 
 # %%
