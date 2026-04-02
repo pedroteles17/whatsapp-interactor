@@ -273,6 +273,26 @@ class TemplateMensagem:
         self.nome_cliente = nome_cliente
         self.cpf = cpf
 
+    def pre_venda_copa(self):
+        return (
+            f"Oi, {self.nome_cliente}! Tudo bem? ✨\n\n"
+            "Aqui é a Lê, assistente virtual da Leitura Boulevard! Como você é um cliente especial da nossa loja, estou passando para te dar um spoiler de campeão: a pré-venda do *Álbum da Copa do Mundo 2026* já começou! ⚽🇧🇷\n\n"
+            "Temos opções para todos os tipos de colecionadores. Confira os destaques:\n\n"
+            "🏆 *Kits Premium (previsão de chegada: final de maio):*\n"
+            "• Kit Estádio (Edição Numerada): *R$ 1.129,90*\n"
+            "• Box Super Premium: *R$ 499,90*\n"
+            "• Box Premium: *R$ 429,90*\n"
+            "• Box Caixa Premium: *R$ 359,90*\n"
+            "• Box Caixa Trapezoidal: *R$ 284,90*\n\n"
+            "📖 *Álbuns e Figurinhas (previsão de chegada: início de maio):*\n"
+            "• Álbum Capa Dura (Ouro ou Prata): *R$ 79,90*\n"
+            "• Álbum Brochura: *R$ 24,90*\n"
+            "• Blister (12 envelopes): *R$ 84,00*\n\n"
+            "A procura está enorme e os boxes numerados são *limitadíssimos*!\n\n"
+            "Como você prefere garantir o seu? Pode vir aqui na nossa loja no *Boulevard Shopping* conferir de perto ou, se preferir, eu faço a sua reserva por aqui agora mesmo! O que acha? 😉\n\n"
+            "PS: Não quer mais receber essas mensagens? Sem problema! É só responder SAIR que eu paro de te enviar! 😉\n"
+        )
+
     def loja_especifica(self, nome_loja, numero_pontos):
         if numero_pontos < 1000:
             raise ValueError("O número de pontos deve ser maior ou igual a 1000.")

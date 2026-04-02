@@ -117,7 +117,7 @@ sempreleitura = (
 )
 
 sempreleitura['mensagem'] = sempreleitura.apply(
-    lambda row: TemplateMensagem(row['primeiro_nome'], row["cpf"]).pontos_a_expirar(
+    lambda row: TemplateMensaegm(row['primeiro_nome'], row["cpf"]).pontos_a_expirar(
         row["data_min_a_expirar"], row["data_max_a_expirar"],
         row["creditos_a_expirar"], row['Saldo']
     ), axis=1
